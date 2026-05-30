@@ -58,8 +58,16 @@ export class BrowserHarnessClient {
         await this.clickAt(action.x, action.y);
         await this.settleAfterInput();
         return this.pageInfo();
+      case "clickRef":
+        await this.clickRef(action.ref);
+        await this.settleAfterInput();
+        return this.pageInfo();
       case "type":
         await this.cdp("Input.insertText", { text: action.text });
+        await this.settleAfterInput();
+        return this.pageInfo();
+      case "typeRef":
+        await this.typeIntoRef(action.ref, action.text, action.clear ?? true);
         await this.settleAfterInput();
         return this.pageInfo();
       case "press":
@@ -83,6 +91,8 @@ export class BrowserHarnessClient {
         return this.pageInfo();
       case "js":
         return this.evaluateJavaScript(action.code);
+      case "probeDom":
+        return this.probeDom(action.code);
       case "done":
         return action.reason;
     }
@@ -183,6 +193,26 @@ export class BrowserHarnessClient {
     });
   }
 
+  private async clickRef(ref: string): Promise<void> {
+    const page = await this.activePage();
+    const locator = page.locator(`[data-agentic-ref="${escapeAttribute(ref)}"]`).first();
+    await locator.waitFor({ state: "visible", timeout: 5_000 });
+    const box = await locator.boundingBox();
+    if (!box) throw new Error(`Element ref ${ref} is not visible`);
+    await this.clickAt(box.x + box.width / 2, box.y + box.height / 2);
+  }
+
+  private async typeIntoRef(ref: string, text: string, clear: boolean): Promise<void> {
+    const page = await this.activePage();
+    const locator = page.locator(`[data-agentic-ref="${escapeAttribute(ref)}"]`).first();
+    await locator.waitFor({ state: "visible", timeout: 5_000 });
+    await locator.focus();
+    if (clear) {
+      await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
+    }
+    await this.cdp("Input.insertText", { text });
+  }
+
   private async pressKey(key: string): Promise<void> {
     const page = await this.activePage();
     await page.keyboard.press(key);
@@ -203,6 +233,122 @@ export class BrowserHarnessClient {
         result.exceptionDetails.exception?.value ??
         result.exceptionDetails.text ??
         "JavaScript evaluation failed";
+      throw new Error(String(message));
+    }
+
+    return renderRemoteObject(result.result);
+  }
+
+  private async probeDom(code: string): Promise<string> {
+    const expression = `(async () => {
+      const findings = [];
+      const win = window;
+      win.__agenticE2ERefs ||= new Map();
+      win.__agenticE2EProbeCounter ||= 0;
+
+      const trim = (value, max = 300) => {
+        const text = String(value ?? "").replace(/\\s+/g, " ").trim();
+        return text.length <= max ? text : text.slice(0, max - 1) + "...";
+      };
+
+      const attrEscape = (value) => String(value).replace(/\\\\/g, "\\\\\\\\").replace(/"/g, "\\\\\"");
+      const cssEscape = (value) => win.CSS?.escape ? win.CSS.escape(String(value)) : String(value).replace(/[^a-zA-Z0-9_-]/g, "\\\\$&");
+      const selectorFor = (element) => {
+        if (!(element instanceof Element)) return "";
+        if (element.id) return "#" + cssEscape(element.id);
+        const testId = element.getAttribute("data-testid") || element.getAttribute("data-test-id") || element.getAttribute("data-cy");
+        if (testId) return '[data-testid="' + attrEscape(testId) + '"]';
+        const parts = [];
+        let current = element;
+        while (current && current.nodeType === Node.ELEMENT_NODE && current !== document.body) {
+          const tag = current.tagName.toLowerCase();
+          const parent = current.parentElement;
+          if (!parent) {
+            parts.unshift(tag);
+            break;
+          }
+          const siblings = Array.from(parent.children).filter((child) => child.tagName === current.tagName);
+          const index = siblings.indexOf(current) + 1;
+          parts.unshift(siblings.length > 1 ? tag + ":nth-of-type(" + index + ")" : tag);
+          current = parent;
+          if (parts.length >= 4) break;
+        }
+        return parts.join(" > ");
+      };
+
+      const describe = (element, metadata = {}) => {
+        if (!(element instanceof Element)) return undefined;
+        const rect = element.getBoundingClientRect();
+        const style = win.getComputedStyle(element);
+        const input = element;
+        return {
+          tag: element.tagName.toLowerCase(),
+          role: element.getAttribute("role") || undefined,
+          ariaLabel: element.getAttribute("aria-label") || undefined,
+          name: element.getAttribute("name") || undefined,
+          id: element.id || undefined,
+          selector: selectorFor(element),
+          text: trim(element.innerText || element.textContent || ""),
+          value: "value" in input ? trim(input.value) : undefined,
+          placeholder: "placeholder" in input ? trim(input.placeholder, 120) : undefined,
+          type: "type" in input ? String(input.type || "") : undefined,
+          disabled: "disabled" in input ? Boolean(input.disabled) : undefined,
+          visible: rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none",
+          bounds: {
+            x: Math.round(rect.x),
+            y: Math.round(rect.y),
+            width: Math.round(rect.width),
+            height: Math.round(rect.height)
+          },
+          ...metadata
+        };
+      };
+
+      const ref = (element, metadata = {}) => {
+        if (!(element instanceof Element)) return undefined;
+        const id = "j" + (++win.__agenticE2EProbeCounter);
+        win.__agenticE2ERefs.set(id, element);
+        element.setAttribute("data-agentic-ref", id);
+        const summary = { ref: id, ...describe(element, metadata) };
+        findings.push(summary);
+        return id;
+      };
+
+      const all = (selector, root = document) => Array.from(root.querySelectorAll(selector));
+      const one = (selector, root = document) => root.querySelector(selector);
+      const byText = (text, selector = "body *") => {
+        const needle = String(text).toLowerCase();
+        return all(selector).filter((element) => trim(element.innerText || element.textContent || "").toLowerCase().includes(needle));
+      };
+      const simplify = (value) => {
+        if (value instanceof Element) return describe(value);
+        if (Array.isArray(value)) return value.slice(0, 50).map(simplify);
+        if (value && typeof value === "object") {
+          return Object.fromEntries(Object.entries(value).slice(0, 50).map(([key, item]) => [key, simplify(item)]));
+        }
+        return value;
+      };
+
+      const result = await (async () => {
+${code}
+      })();
+
+      return { result: simplify(result), nodes: findings.slice(0, 100) };
+    })()`;
+
+    const result = await this.cdp<RuntimeEvaluateResult>("Runtime.evaluate", {
+      expression,
+      awaitPromise: true,
+      returnByValue: true,
+      userGesture: true
+    });
+
+    if (result.exceptionDetails) {
+      const message =
+        result.exceptionDetails.exception?.description ??
+        result.exceptionDetails.exception?.value ??
+        result.exceptionDetails.text ??
+        "DOM probe failed";
       throw new Error(String(message));
     }
 
@@ -253,4 +399,8 @@ function renderRemoteObject(remote: RuntimeRemoteObject): string {
   if (value === undefined || value === null) return "";
   if (typeof value === "string") return value;
   return JSON.stringify(value);
+}
+
+function escapeAttribute(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }

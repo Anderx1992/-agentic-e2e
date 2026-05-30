@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { chromium, type Browser, type Page } from "@playwright/test";
+import { collectAriaTree } from "./aria-tree.js";
 import type { Observation } from "./observation.js";
 
 export class PlaywrightObserver {
@@ -37,11 +38,17 @@ export class PlaywrightObserver {
     const visibleText = await page
       .evaluate(() => document.body?.innerText?.slice(0, 12000) ?? "")
       .catch(() => "");
+    const aria = await collectAriaTree(page).catch(() => ({
+      ariaTree: "",
+      ariaNodes: []
+    }));
 
     return {
       url: page.url(),
       title: await page.title().catch(() => ""),
       visibleText,
+      ariaTree: aria.ariaTree,
+      ariaNodes: aria.ariaNodes,
       screenshotPath: fs.existsSync(screenshotPath) ? screenshotPath : undefined,
       consoleErrors: [...this.consoleErrors],
       failedRequests: [...this.failedRequests],

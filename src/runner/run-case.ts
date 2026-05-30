@@ -6,6 +6,7 @@ import { PlaywrightObserver } from "../browser/playwright-observer.js";
 import { loadCase } from "../config/load-case.js";
 import { BrowserHarnessClient } from "../harness/browser-harness-client.js";
 import { writeReports } from "../report/reporter.js";
+import { SkillStore } from "../skills/skill-store.js";
 import type { CaseResult } from "../types/result.js";
 
 export async function runCase(casePath: string): Promise<CaseResult> {
@@ -26,11 +27,16 @@ export async function runCase(casePath: string): Promise<CaseResult> {
     observer = await PlaywrightObserver.connect(chrome.cdpUrl);
     harness = new BrowserHarnessClient({ cdpUrl: chrome.cdpUrl });
     await harness.newTab(testCase.app.start_url);
+    const skillStore = new SkillStore();
+    const validatedSkills = await skillStore.loadForCase(testCase, await observer.currentPage()).catch(() => []);
 
     const agent = new ClaudeBrowserAgent({
       harness,
       observer,
-      artifactsDir
+      artifactsDir,
+      skillIndexPrompt: skillStore.formatIndexForPrompt(validatedSkills),
+      agentSkills: validatedSkills,
+      formatSkillDetail: (skill) => skillStore.formatSkillDetail(skill)
     });
 
     const timeoutMs = testCase.constraints?.timeout_ms ?? 120000;
@@ -45,6 +51,7 @@ export async function runCase(casePath: string): Promise<CaseResult> {
       durationMs: finishedAt.getTime() - startedAt.getTime()
     };
 
+    skillStore.learnFromResult(result);
     writeReports(result);
     return result;
   } catch (error) {

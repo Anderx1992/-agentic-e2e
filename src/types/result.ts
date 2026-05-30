@@ -9,6 +9,12 @@ export type StepRecord = {
   observation: Observation;
   action: AgentAction;
   actionResult: string;
+  effort?: {
+    toolCallsSinceLastAction: number;
+    observations: number;
+    domProbes: number;
+    jsInspections: number;
+  };
 };
 
 export type CaseResult = {

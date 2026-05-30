@@ -1,11 +1,14 @@
 export type AgentAction =
   | { type: "navigate"; url: string; reason: string }
   | { type: "click"; x: number; y: number; reason: string }
+  | { type: "clickRef"; ref: string; reason: string }
   | { type: "type"; text: string; reason: string }
+  | { type: "typeRef"; ref: string; text: string; clear?: boolean; reason: string }
   | { type: "press"; key: string; reason: string }
   | { type: "scroll"; deltaY: number; reason: string }
   | { type: "wait"; ms: number; reason: string }
   | { type: "js"; code: string; reason: string }
+  | { type: "probeDom"; code: string; reason: string }
   | { type: "done"; result: "pass" | "fail" | "blocked"; reason: string; summary: string };
 
 export type AgentDecision = AgentAction;
