@@ -28,11 +28,31 @@ test("plugin declares a stdio MCP server", () => {
   const agentServer = config.mcpServers?.["browser-change-agent"];
 
   assert.equal(browserServer?.command, "node");
-  assert.deepEqual(browserServer?.args, ["${CLAUDE_PLUGIN_ROOT}/scripts/start-mcp.mjs"]);
+  assert.deepEqual(browserServer?.args, ["${CLAUDE_PLUGIN_ROOT}/dist/mcp/server.mjs"]);
   assert.equal(visionServer?.command, "node");
-  assert.deepEqual(visionServer?.args, ["${CLAUDE_PLUGIN_ROOT}/scripts/start-mcp.mjs", "src/mcp/vision-server.ts"]);
+  assert.deepEqual(visionServer?.args, ["${CLAUDE_PLUGIN_ROOT}/dist/mcp/vision-server.mjs"]);
   assert.equal(agentServer?.command, "node");
-  assert.deepEqual(agentServer?.args, ["${CLAUDE_PLUGIN_ROOT}/scripts/start-mcp.mjs", "src/mcp/agent-server.ts"]);
+  assert.deepEqual(agentServer?.args, ["${CLAUDE_PLUGIN_ROOT}/dist/mcp/agent-server.mjs"]);
+});
+
+test("plugin runtime config does not install node dependencies", () => {
+  const config = fs.readFileSync(path.join(root, ".mcp.json"), "utf8");
+  const launcher = fs.readFileSync(path.join(root, "scripts", "start-mcp.mjs"), "utf8");
+
+  assert.doesNotMatch(config, /npm|tsx|node_modules/);
+  assert.doesNotMatch(launcher, /npm install|spawnSync|package-lock|CLAUDE_PLUGIN_DATA/);
+});
+
+test("plugin runtime bundle files exist", () => {
+  const expected = [
+    path.join(root, "dist", "mcp", "server.mjs"),
+    path.join(root, "dist", "mcp", "vision-server.mjs"),
+    path.join(root, "dist", "mcp", "agent-server.mjs")
+  ];
+
+  for (const filePath of expected) {
+    assert.equal(fs.existsSync(filePath), true, `${filePath} should be built before packaging`);
+  }
 });
 
 test("browser verification skill is namespaced by the plugin", () => {

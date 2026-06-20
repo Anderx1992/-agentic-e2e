@@ -1,6 +1,8 @@
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { query, type SDKMessage, type SDKResultMessage, type PermissionMode } from "@anthropic-ai/claude-agent-sdk";
+import { resolveClaudeCodeExecutable } from "./claude-code.js";
 import { loadAgentModelConfig, type AgentModelConfig } from "./settings.js";
 
 export type VerifyChangeInput = {
@@ -17,6 +19,7 @@ export type VerifyChangeInput = {
 export type VerifyChangeResult = {
   summary: string;
   modelConfig: AgentModelConfig;
+  claudeCodeExecutable?: string;
   sessionId?: string;
   stopReason?: string | null;
   terminalReason?: string;
@@ -32,6 +35,7 @@ export async function runBrowserChangeAgent(input: VerifyChangeInput, cwd = proc
   let finalResult: SDKResultMessage | undefined;
 
   const settingsOption = modelConfig.settingsExists ? modelConfig.settingsPath : undefined;
+  const claudeCodeExecutable = resolveClaudeCodeExecutable();
   const maxTurns = input.maxTurns ?? 30;
   const permissionMode = input.permissionMode ?? "dontAsk";
 
@@ -42,6 +46,7 @@ export async function runBrowserChangeAgent(input: VerifyChangeInput, cwd = proc
       maxTurns,
       model: modelConfig.model,
       fallbackModel: modelConfig.fallbackModel,
+      pathToClaudeCodeExecutable: claudeCodeExecutable,
       settings: settingsOption,
       settingSources: ["user", "project", "local"],
       tools: ["Read", "Grep", "Glob", "Bash"],
@@ -70,14 +75,14 @@ export async function runBrowserChangeAgent(input: VerifyChangeInput, cwd = proc
         "browser-change-verifier": {
           type: "stdio",
           command: "node",
-          args: [path.join(pluginRoot, "scripts", "start-mcp.mjs")],
+          args: mcpServerArgs("server"),
           timeout: 600000,
           alwaysLoad: true
         },
         "browser-vision-analyzer": {
           type: "stdio",
           command: "node",
-          args: [path.join(pluginRoot, "scripts", "start-mcp.mjs"), "src/mcp/vision-server.ts"],
+          args: mcpServerArgs("vision-server", "src/mcp/vision-server.ts"),
           timeout: 600000,
           alwaysLoad: true
         }
@@ -110,12 +115,19 @@ export async function runBrowserChangeAgent(input: VerifyChangeInput, cwd = proc
   return {
     summary: finalResult?.type === "result" && finalResult.subtype === "success" ? finalResult.result : messages.at(-1) ?? "",
     modelConfig,
+    claudeCodeExecutable,
     sessionId: finalResult?.session_id,
     stopReason: finalResult?.type === "result" && finalResult.subtype === "success" ? finalResult.stop_reason : undefined,
     terminalReason: finalResult?.type === "result" && finalResult.subtype === "success" ? finalResult.terminal_reason : undefined,
     totalCostUsd: finalResult?.type === "result" && finalResult.subtype === "success" ? finalResult.total_cost_usd : undefined,
     messages: messages.slice(-20)
   };
+}
+
+function mcpServerArgs(bundleName: "server" | "vision-server", sourceEntry = "src/mcp/server.ts"): string[] {
+  const bundled = path.join(pluginRoot, "dist", "mcp", `${bundleName}.mjs`);
+  if (fs.existsSync(bundled)) return [bundled];
+  return [path.join(pluginRoot, "scripts", "start-mcp.mjs"), sourceEntry];
 }
 
 function buildPrompt(input: VerifyChangeInput, modelConfig: AgentModelConfig): string {

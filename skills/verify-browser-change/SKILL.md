@@ -10,7 +10,7 @@ Primary browser verification mode is screenshot-first. After every `browser_obse
 
 Default orchestration is handled by the Claude Agent SDK agent tool `mcp__browser-change-agent__verify_change`. It reads the user's `~/.claude/settings.json` for model configuration, inspects the code diff, starts or uses the app, controls Chrome, and calls the vision analyzer when useful.
 
-When a screenshot needs deeper visual judgment during manual debugging, call the separate vision MCP tool `mcp__browser-vision-analyzer__analyze_screenshot` with the `screenshotPath` returned by `browser_observe`. Use it for visual regressions, layout comparisons, dense screenshots, subtle styling changes, or when the expected visual result is hard to judge from text metadata.
+When a screenshot needs deeper visual judgment during manual debugging, call the separate vision MCP tool `mcp__browser-vision-analyzer__analyze_screenshot` with the `screenshotPath` returned by `browser_observe`. It performs the model call through Claude Agent SDK and uses the user's `~/.claude/settings.json` model configuration. Use it for visual regressions, layout comparisons, dense screenshots, subtle styling changes, or when the expected visual result is hard to judge from text metadata.
 
 ## Workflow
 

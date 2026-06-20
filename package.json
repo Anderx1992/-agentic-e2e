@@ -4,9 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "build": "node scripts/build.mjs",
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "mcp": "tsx src/mcp/server.ts",
     "mcp:vision": "tsx src/mcp/vision-server.ts",
     "mcp:agent": "tsx src/mcp/agent-server.ts",
+    "prepare:plugin": "npm run typecheck && npm run build && npm test",
     "test": "tsx --test tests/**/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
@@ -21,6 +24,7 @@
     "@types/chrome-remote-interface": "^0.34.0",
     "@types/node": "^20.14.10",
     "devtools-protocol": "^0.0.1648812",
+    "rolldown": "^1.1.2",
     "typescript": "^5.5.3"
   }
 }

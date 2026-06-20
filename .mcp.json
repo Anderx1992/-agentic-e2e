@@ -2,17 +2,17 @@
   "mcpServers": {
     "browser-change-verifier": {
       "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/start-mcp.mjs"],
+      "args": ["${CLAUDE_PLUGIN_ROOT}/dist/mcp/server.mjs"],
       "timeout": 600000
     },
     "browser-vision-analyzer": {
       "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/start-mcp.mjs", "src/mcp/vision-server.ts"],
+      "args": ["${CLAUDE_PLUGIN_ROOT}/dist/mcp/vision-server.mjs"],
       "timeout": 600000
     },
     "browser-change-agent": {
       "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/start-mcp.mjs", "src/mcp/agent-server.ts"],
+      "args": ["${CLAUDE_PLUGIN_ROOT}/dist/mcp/agent-server.mjs"],
       "timeout": 600000
     }
   }

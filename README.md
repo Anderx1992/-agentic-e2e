@@ -2,7 +2,7 @@
 
 Claude Code plugin for verifying frontend code changes in a real Chrome browser.
 
-The plugin changes the old runner model: it no longer executes natural-language YAML test cases or runs its own Claude Agent SDK loop. Claude Code stays in charge of reading diffs, editing code, starting the app, and deciding what to verify. This plugin contributes a focused browser-verification skill plus MCP tools that operate Chrome through CDP.
+The plugin changes the old runner model: it no longer executes natural-language YAML test cases. Claude Code gets a browser-verification skill, CDP browser MCP tools, and a Claude Agent SDK orchestration tool that can inspect code changes, start the app, operate Chrome, and ask the vision MCP for screenshot analysis.
 
 ## What It Adds
 
@@ -11,7 +11,7 @@ The plugin changes the old runner model: it no longer executes natural-language 
 - Three plugin MCP servers in `.mcp.json`
 - A Claude Agent SDK verification agent that orchestrates diff inspection, app startup, browser control, and visual analysis
 - CDP browser tools for navigation, screenshot-first observation, element refs, typing, key presses, DOM probes, JavaScript inspection, console errors, and failed network requests
-- A separate vision-analysis MCP tool that reads a screenshot and calls a configured multimodal model
+- A separate vision-analysis MCP tool that reads a screenshot and calls Claude Agent SDK
 
 ## Local Development
 
@@ -26,6 +26,18 @@ Run checks:
 ```bash
 npm run typecheck
 npm test
+```
+
+Build the plugin runtime bundles:
+
+```bash
+npm run build
+```
+
+For a release-ready plugin directory, run:
+
+```bash
+npm run prepare:plugin
 ```
 
 Run the MCP server directly for debugging:
@@ -51,7 +63,7 @@ claude --plugin-dir .
 Claude Code will load:
 
 - the plugin manifest from `.claude-plugin/plugin.json`
-- the Agent SDK, browser, and vision MCP servers from `.mcp.json`
+- the bundled Agent SDK, browser, and vision MCP servers from `.mcp.json`
 - the verification skill from `skills/verify-browser-change/SKILL.md`
 
 Inside Claude Code, verify that the plugin is available:
@@ -75,6 +87,16 @@ claude plugin install browser-change-verifier@your-marketplace --scope project
 ```
 
 Use `--scope project` when the whole team should get the plugin through `.claude/settings.json`; use `--scope user` for personal installation.
+
+The distributed plugin must include:
+
+- `.claude-plugin/plugin.json`
+- `.mcp.json`
+- `skills/verify-browser-change/SKILL.md`
+- `dist/`
+- `README.md`
+
+It does not need `node_modules`, and plugin users do not need to run `npm install`.
 
 ## Daily Usage
 
@@ -137,7 +159,7 @@ Preferred order when operating the browser:
 
 ## Vision MCP
 
-The second MCP server, `browser-vision-analyzer`, encapsulates "read screenshot, call multimodal model, return analysis".
+The second MCP server, `browser-vision-analyzer`, encapsulates "read screenshot, call Claude Agent SDK, return analysis". It does not call Anthropic, OpenAI, or OpenAI-compatible HTTP APIs directly.
 
 Tool:
 
@@ -148,25 +170,11 @@ Inputs:
 - `screenshotPath`: path returned by `browser_observe`
 - `imageBase64`: optional alternative to `screenshotPath`
 - `prompt`: visual verification question
-- `provider`: `auto`, `anthropic`, `openai`, or `openai-compatible`
-- `model`: optional model override
+- `model`: optional Claude Agent SDK model override
+- `maxTurns`: optional SDK turn limit, default `1`
+- `timeoutMs`: optional SDK timeout, default `120000`
 
-Provider configuration:
-
-```bash
-# Anthropic
-ANTHROPIC_API_KEY=...
-VISION_MODEL=claude-sonnet-4-5
-
-# OpenAI
-OPENAI_API_KEY=...
-VISION_MODEL=gpt-4o
-
-# OpenAI-compatible endpoint
-VISION_API_URL=https://your-provider.example/v1
-VISION_API_KEY=...
-VISION_MODEL=your-vision-model
-```
+Model configuration is shared with the high-level agent. The MCP reads `~/.claude/settings.json`, passes that settings file to Claude Agent SDK, and falls back to `CLAUDE_MODEL` or the SDK default if no user setting exists.
 
 Typical flow:
 
@@ -175,7 +183,7 @@ mcp__browser-change-verifier__browser_observe
 mcp__browser-vision-analyzer__analyze_screenshot({ screenshotPath, prompt })
 ```
 
-Keep browser control and vision judgment separate: use `browser-change-verifier` to navigate and capture, then `browser-vision-analyzer` for model-based screenshot analysis.
+Keep browser control and vision judgment separate: use `browser-change-verifier` to navigate and capture, then `browser-vision-analyzer` for Claude Agent SDK-based screenshot analysis.
 
 ## What Claude Code Actually Calls
 
@@ -215,6 +223,14 @@ It extracts model information such as:
 - `effort`
 
 The same settings path is also passed into the Agent SDK `query()` call so Claude Code settings are applied by the SDK. If the file does not exist, the agent falls back to `CLAUDE_MODEL` and then to the SDK default model.
+
+For the Claude Code executable used by Claude Agent SDK, the plugin prefers a local installation:
+
+1. `CLAUDE_CODE_PATH` or `CLAUDE_PATH` when set
+2. `claude` found on `PATH` or Windows `Path`
+3. npm global install locations on Windows, including `NPM_CONFIG_PREFIX`, `npm_config_prefix`, `%APPDATA%\npm`, and `%USERPROFILE%\AppData\Roaming\npm`
+4. Common local install locations such as `/opt/homebrew/bin` or `/usr/local/bin` on macOS
+5. Claude Agent SDK default executable resolution
 
 Example user settings:
 
@@ -265,12 +281,12 @@ If the plugin does not appear:
 - Make sure Claude Code is started from this repository with `claude --plugin-dir .`.
 - Run `/reload-plugins` inside Claude Code after editing plugin files.
 - Run `/plugin` and `/mcp` to check plugin and MCP server status.
-- Check that Node.js and npm are available on PATH.
+- Check that Node.js is available on PATH.
 
 If browser tools do not appear:
 
-- The MCP servers may still be starting or installing dependencies into `${CLAUDE_PLUGIN_DATA}`.
-- Run `npm install` in this repository for development use.
+- Confirm `npm run build` has generated `dist/mcp/*.mjs`.
+- Run `npm install` in this repository only for source development.
 - Run `npm run mcp`, `npm run mcp:vision`, or `npm run mcp:agent` to see startup errors directly.
 
 If the Agent SDK verification tool fails:
@@ -281,9 +297,9 @@ If the Agent SDK verification tool fails:
 
 If vision analysis fails:
 
-- Set one provider credential: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `VISION_API_URL` plus `VISION_API_KEY`.
-- Set `VISION_MODEL` if your provider does not support the default model name.
-- Confirm that `screenshotPath` exists and points to a PNG/JPEG/WebP file.
+- Confirm Claude Code authentication or `ANTHROPIC_API_KEY` is configured for Claude Agent SDK.
+- Confirm `~/.claude/settings.json` contains the model you expect, or pass `model` explicitly to `analyze_screenshot`.
+- Confirm that `screenshotPath` exists and points to a PNG/JPEG/GIF/WebP file.
 
 If Chrome does not start:
 
@@ -317,7 +333,9 @@ Use `browser_observe` before visible actions. It returns a screenshot image plus
 
 ## Runtime Notes
 
-When installed as a plugin, `scripts/start-mcp.mjs` installs Node dependencies into `${CLAUDE_PLUGIN_DATA}` and runs the TypeScript MCP server from the plugin root. This keeps generated dependency files out of the plugin installation directory and survives plugin updates.
+When installed as a plugin, `.mcp.json` starts prebuilt Rolldown bundles in `dist/mcp/*.mjs`. Runtime startup does not install third-party Node dependencies and does not require `tsx`.
+
+`scripts/start-mcp.mjs` is a development-only fallback for source runs. It expects local dev dependencies to already exist and never runs `npm install`.
 
 The browser layer uses `chrome-remote-interface`, which is a direct Chrome DevTools Protocol client. It does not depend on Playwright, Puppeteer, or a browser test runner.
 

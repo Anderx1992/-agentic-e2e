@@ -1,18 +1,26 @@
 import fs from "node:fs";
 import path from "node:path";
+import { query, type SDKMessage, type SDKResultMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import * as z from "zod/v4";
+import { resolveClaudeCodeExecutable } from "../agent/claude-code.js";
+import { loadAgentModelConfig, type AgentModelConfig } from "../agent/settings.js";
 
-type Provider = "anthropic" | "openai" | "openai-compatible";
+type ImageMimeType = "image/jpeg" | "image/png" | "image/gif" | "image/webp";
 
 type VisionAnalysis = {
-  provider: Provider;
-  model: string;
+  runtime: "claude-agent-sdk";
+  modelConfig: Pick<AgentModelConfig, "settingsPath" | "settingsExists" | "source" | "model" | "fallbackModel">;
+  claudeCodeExecutable?: string;
   analysis: string;
+  sessionId?: string;
+  stopReason?: string | null;
+  terminalReason?: string;
+  totalCostUsd?: number;
   image: {
     source: "path" | "base64";
-    mimeType: string;
+    mimeType: ImageMimeType;
     bytes: number;
     screenshotPath?: string;
   };
@@ -33,30 +41,45 @@ const server = new McpServer({
 server.registerTool(
   "analyze_screenshot",
   {
-    title: "Analyze Screenshot With Vision Model",
-    description: "Analyze a browser screenshot with a configured vision model. Accepts a screenshot path or base64 image.",
+    title: "Analyze Screenshot With Claude Agent SDK",
+    description: "Analyze a browser screenshot through Claude Agent SDK. Accepts a screenshot path or base64 image.",
     inputSchema: {
       screenshotPath: z.string().optional().describe("Path to a screenshot file, usually from browser_observe.screenshotPath."),
       imageBase64: z.string().optional().describe("Base64 image data. Used when screenshotPath is not provided."),
       mimeType: z.string().optional().describe("Image MIME type. Defaults to image/png."),
       prompt: z.string().optional().describe("Specific visual verification question or expected behavior."),
-      provider: z.enum(["auto", "anthropic", "openai", "openai-compatible"]).optional().describe("Model provider. Defaults to auto."),
-      model: z.string().optional().describe("Model name. Defaults to VISION_MODEL or a provider-specific default."),
-      maxTokens: z.number().min(1).max(4096).optional().describe("Max response tokens. Defaults to 1000.")
+      model: z.string().optional().describe("Optional SDK model override. Defaults to ~/.claude/settings.json, then CLAUDE_MODEL, then SDK default."),
+      maxTurns: z.number().int().min(1).max(5).optional().describe("Maximum SDK agent turns. Defaults to 1."),
+      timeoutMs: z.number().int().min(1000).max(300000).optional().describe("Timeout for the SDK analysis. Defaults to 120000.")
     }
   },
-  async ({ screenshotPath, imageBase64, mimeType = "image/png", prompt, provider = "auto", model, maxTokens = 1000 }) => {
+  async ({ screenshotPath, imageBase64, mimeType = "image/png", prompt, model, maxTurns = 1, timeoutMs = 120000 }) => {
     const image = readImage({ screenshotPath, imageBase64, mimeType });
-    const selected = selectProvider(provider, model);
-    const analysis =
-      selected.provider === "anthropic"
-        ? await analyzeWithAnthropic(image.base64, image.mimeType, prompt ?? DEFAULT_PROMPT, selected.model, maxTokens)
-        : await analyzeWithOpenAICompatible(selected.provider, image.base64, image.mimeType, prompt ?? DEFAULT_PROMPT, selected.model, maxTokens);
+    const modelConfig = await loadAgentModelConfig(process.cwd());
+    const claudeCodeExecutable = resolveClaudeCodeExecutable();
+    const analysis = await analyzeWithClaudeAgentSdk(image.base64, image.mimeType, prompt ?? DEFAULT_PROMPT, modelConfig, {
+      model,
+      maxTurns,
+      timeoutMs,
+      claudeCodeExecutable
+    });
 
     const result: VisionAnalysis = {
-      provider: selected.provider,
-      model: selected.model,
-      analysis,
+      runtime: "claude-agent-sdk",
+      modelConfig: {
+        settingsPath: modelConfig.settingsPath,
+        settingsExists: modelConfig.settingsExists,
+        source: modelConfig.source,
+        model: model ?? modelConfig.model,
+        fallbackModel: modelConfig.fallbackModel
+      },
+      claudeCodeExecutable,
+      analysis: analysis.text,
+      sessionId: analysis.result?.session_id,
+      stopReason: analysis.result?.type === "result" && analysis.result.subtype === "success" ? analysis.result.stop_reason : undefined,
+      terminalReason:
+        analysis.result?.type === "result" && analysis.result.subtype === "success" ? analysis.result.terminal_reason : undefined,
+      totalCostUsd: analysis.result?.type === "result" && analysis.result.subtype === "success" ? analysis.result.total_cost_usd : undefined,
       image: {
         source: screenshotPath ? "path" : "base64",
         mimeType: image.mimeType,
@@ -82,7 +105,7 @@ async function main(): Promise<void> {
   console.error("browser-vision-analyzer MCP server running on stdio");
 }
 
-function readImage(input: { screenshotPath?: string; imageBase64?: string; mimeType: string }): { base64: string; mimeType: string } {
+function readImage(input: { screenshotPath?: string; imageBase64?: string; mimeType: string }): { base64: string; mimeType: ImageMimeType } {
   if (input.screenshotPath) {
     const filePath = path.resolve(input.screenshotPath);
     if (!fs.existsSync(filePath)) {
@@ -97,171 +120,116 @@ function readImage(input: { screenshotPath?: string; imageBase64?: string; mimeT
   if (input.imageBase64) {
     return {
       base64: stripDataUrl(input.imageBase64),
-      mimeType: input.mimeType
+      mimeType: normalizeMimeType(input.mimeType)
     };
   }
 
   throw new Error("Provide either screenshotPath or imageBase64.");
 }
 
-function selectProvider(requested: "auto" | Provider, model?: string): { provider: Provider; model: string } {
-  if (requested === "anthropic" || (requested === "auto" && process.env.ANTHROPIC_API_KEY)) {
-    return {
-      provider: "anthropic",
-      model: model ?? process.env.VISION_MODEL ?? "claude-sonnet-4-5"
-    };
-  }
-
-  if (requested === "openai" || (requested === "auto" && process.env.OPENAI_API_KEY)) {
-    return {
-      provider: "openai",
-      model: model ?? process.env.VISION_MODEL ?? "gpt-4o"
-    };
-  }
-
-  if (requested === "openai-compatible" || (requested === "auto" && process.env.VISION_API_URL)) {
-    const selectedModel = model ?? process.env.VISION_MODEL;
-    if (!selectedModel) {
-      throw new Error("Set VISION_MODEL or pass model when using openai-compatible provider.");
+async function analyzeWithClaudeAgentSdk(
+  imageBase64: string,
+  mimeType: ImageMimeType,
+  prompt: string,
+  modelConfig: AgentModelConfig,
+  options: { model?: string; maxTurns: number; timeoutMs: number; claudeCodeExecutable?: string }
+): Promise<{ text: string; result?: SDKResultMessage }> {
+  const messages: string[] = [];
+  let finalResult: SDKResultMessage | undefined;
+  const settingsOption = modelConfig.settingsExists ? modelConfig.settingsPath : undefined;
+  const run = query({
+    prompt: screenshotPrompt(imageBase64, mimeType, prompt),
+    options: {
+      cwd: process.cwd(),
+      maxTurns: options.maxTurns,
+      model: options.model ?? modelConfig.model,
+      fallbackModel: modelConfig.fallbackModel,
+      pathToClaudeCodeExecutable: options.claudeCodeExecutable,
+      settings: settingsOption,
+      settingSources: ["user", "project", "local"],
+      tools: [],
+      permissionMode: "dontAsk",
+      systemPrompt: [
+        "You are a precise visual QA assistant for browser screenshots.",
+        "Analyze only the screenshot and the user's requested verification question.",
+        "Do not ask to run tools or inspect files. Return a concise visual judgment with pass/fail/blocker signals."
+      ].join("\n"),
+      env: {
+        ...process.env,
+        CLAUDE_AGENT_SDK_CLIENT_APP: "browser-vision-analyzer/0.1.0"
+      },
+      title: "Browser screenshot analysis"
     }
-    return {
-      provider: "openai-compatible",
-      model: selectedModel
-    };
-  }
-
-  throw new Error(
-    "No vision model provider configured. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or VISION_API_URL/VISION_API_KEY/VISION_MODEL."
-  );
-}
-
-async function analyzeWithAnthropic(
-  imageBase64: string,
-  mimeType: string,
-  prompt: string,
-  model: string,
-  maxTokens: number
-): Promise<string> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) throw new Error("ANTHROPIC_API_KEY is required for anthropic provider.");
-
-  const response = await fetch(process.env.ANTHROPIC_API_URL ?? "https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": process.env.ANTHROPIC_VERSION ?? "2023-06-01"
-    },
-    body: JSON.stringify({
-      model,
-      max_tokens: maxTokens,
-      messages: [
-        {
-          role: "user",
-          content: [
-            {
-              type: "image",
-              source: {
-                type: "base64",
-                media_type: mimeType,
-                data: imageBase64
-              }
-            },
-            {
-              type: "text",
-              text: prompt
-            }
-          ]
-        }
-      ]
-    })
   });
 
-  const json = (await response.json().catch(() => undefined)) as
-    | { content?: Array<{ type?: string; text?: string }>; error?: { message?: string } }
-    | undefined;
-  if (!response.ok) {
-    throw new Error(`Anthropic vision request failed (${response.status}): ${json?.error?.message ?? response.statusText}`);
+  const timeout = setTimeout(() => run.close(), options.timeoutMs);
+  try {
+    for await (const message of run) {
+      const text = messageToText(message);
+      if (text) messages.push(text);
+      if (message.type === "result") finalResult = message;
+    }
+  } finally {
+    clearTimeout(timeout);
   }
 
-  const text = json?.content?.filter((item) => item.type === "text").map((item) => item.text ?? "").join("\n").trim();
-  if (!text) throw new Error("Anthropic vision response did not include text content.");
-  return text;
+  const text =
+    finalResult?.type === "result" && finalResult.subtype === "success" ? finalResult.result.trim() : messages.join("\n").trim();
+  if (!text) {
+    throw new Error("Claude Agent SDK vision analysis did not return text.");
+  }
+  return { text, result: finalResult };
 }
 
-async function analyzeWithOpenAICompatible(
-  provider: "openai" | "openai-compatible",
-  imageBase64: string,
-  mimeType: string,
-  prompt: string,
-  model: string,
-  maxTokens: number
-): Promise<string> {
-  const apiKey = provider === "openai" ? process.env.OPENAI_API_KEY : process.env.VISION_API_KEY;
-  const url =
-    provider === "openai"
-      ? (process.env.OPENAI_API_URL ?? "https://api.openai.com/v1/chat/completions")
-      : normalizeChatCompletionsUrl(process.env.VISION_API_URL);
-  if (!apiKey) {
-    throw new Error(`${provider === "openai" ? "OPENAI_API_KEY" : "VISION_API_KEY"} is required for ${provider} provider.`);
-  }
-
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${apiKey}`
-    },
-    body: JSON.stringify({
-      model,
-      max_tokens: maxTokens,
-      messages: [
+async function* screenshotPrompt(imageBase64: string, mimeType: ImageMimeType, prompt: string): AsyncIterable<SDKUserMessage> {
+  yield {
+    type: "user",
+    parent_tool_use_id: null,
+    message: {
+      role: "user",
+      content: [
         {
-          role: "user",
-          content: [
-            {
-              type: "text",
-              text: prompt
-            },
-            {
-              type: "image_url",
-              image_url: {
-                url: `data:${mimeType};base64,${imageBase64}`
-              }
-            }
-          ]
+          type: "image",
+          source: {
+            type: "base64",
+            media_type: mimeType,
+            data: imageBase64
+          }
+        },
+        {
+          type: "text",
+          text: prompt
         }
       ]
-    })
-  });
-
-  const json = (await response.json().catch(() => undefined)) as
-    | { choices?: Array<{ message?: { content?: string } }>; error?: { message?: string } }
-    | undefined;
-  if (!response.ok) {
-    throw new Error(`${provider} vision request failed (${response.status}): ${json?.error?.message ?? response.statusText}`);
-  }
-
-  const text = json?.choices?.[0]?.message?.content?.trim();
-  if (!text) throw new Error(`${provider} vision response did not include message content.`);
-  return text;
+    }
+  };
 }
 
-function normalizeChatCompletionsUrl(url: string | undefined): string {
-  if (!url) throw new Error("VISION_API_URL is required for openai-compatible provider.");
-  return url.endsWith("/chat/completions") ? url : `${url.replace(/\/$/, "")}/chat/completions`;
+function messageToText(message: SDKMessage): string {
+  if (message.type === "result" && message.subtype === "success") return message.result;
+  if (message.type !== "assistant") return "";
+  return message.message.content
+    .map((block) => (block.type === "text" ? block.text : ""))
+    .filter(Boolean)
+    .join("\n");
 }
 
 function stripDataUrl(value: string): string {
   return value.replace(/^data:[^;]+;base64,/, "");
 }
 
-function inferMimeType(filePath: string, fallback: string): string {
+function inferMimeType(filePath: string, fallback: string): ImageMimeType {
   const ext = path.extname(filePath).toLowerCase();
   if (ext === ".jpg" || ext === ".jpeg") return "image/jpeg";
   if (ext === ".webp") return "image/webp";
+  if (ext === ".gif") return "image/gif";
   if (ext === ".png") return "image/png";
-  return fallback;
+  return normalizeMimeType(fallback);
+}
+
+function normalizeMimeType(value: string): ImageMimeType {
+  if (value === "image/jpeg" || value === "image/png" || value === "image/gif" || value === "image/webp") return value;
+  throw new Error(`Unsupported screenshot MIME type: ${value}. Use image/png, image/jpeg, image/gif, or image/webp.`);
 }
 
 main().catch((error) => {
