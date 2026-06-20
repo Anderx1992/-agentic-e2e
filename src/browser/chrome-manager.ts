@@ -21,7 +21,7 @@ export type ChromeOptions = {
 export async function startChrome(options: ChromeOptions): Promise<ChromeSession> {
   const chromePath = resolveChromePath();
   const port = await getFreePort();
-  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentic-e2e-profile-"));
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "browser-change-verifier-profile-"));
   const cdpUrl = `http://127.0.0.1:${port}`;
 
   const args = [

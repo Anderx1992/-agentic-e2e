@@ -1,23 +1,26 @@
 {
-  "name": "agentic-e2e",
+  "name": "browser-change-verifier",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "case": "tsx src/index.ts --case",
-    "suite": "tsx src/index.ts --suite cases",
+    "mcp": "tsx src/mcp/server.ts",
+    "mcp:vision": "tsx src/mcp/vision-server.ts",
+    "mcp:agent": "tsx src/mcp/agent-server.ts",
     "test": "tsx --test tests/**/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.144",
-    "@playwright/test": "^1.44.0",
-    "yaml": "^2.4.5",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.183",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "chrome-remote-interface": "^0.34.0",
+    "tsx": "^4.22.4",
     "zod": "^4.0.0"
   },
   "devDependencies": {
+    "@types/chrome-remote-interface": "^0.34.0",
     "@types/node": "^20.14.10",
-    "tsx": "^4.16.2",
+    "devtools-protocol": "^0.0.1648812",
     "typescript": "^5.5.3"
   }
 }

@@ -1,4 +1,4 @@
-import type { CDPSession, Page } from "@playwright/test";
+import type { CdpSend } from "./cdp-client.js";
 import type { AriaNodeSummary } from "./observation.js";
 
 type AXValue = {
@@ -86,65 +86,59 @@ const STRUCTURAL_ROLES = new Set([
   "rowheader"
 ]);
 
-export async function collectAriaTree(page: Page): Promise<{
+export async function collectAriaTree(client: CdpSend): Promise<{
   ariaTree: string;
   ariaNodes: AriaNodeSummary[];
 }> {
-  const client = await page.context().newCDPSession(page);
+  await send(client, "Accessibility.enable").catch(() => undefined);
+  const tree = await send<FullAXTreeResult>(client, "Accessibility.getFullAXTree");
+  const nodes = tree.nodes.filter((node) => !node.ignored);
+  const byId = new Map(nodes.map((node) => [node.nodeId, node]));
+  const summarizedById = new Map<string, AriaNodeSummary>();
+  const ariaNodes: AriaNodeSummary[] = [];
 
-  try {
-    await send(client, "Accessibility.enable").catch(() => undefined);
-    const tree = await send<FullAXTreeResult>(client, "Accessibility.getFullAXTree");
-    const nodes = tree.nodes.filter((node) => !node.ignored);
-    const byId = new Map(nodes.map((node) => [node.nodeId, node]));
-    const summarizedById = new Map<string, AriaNodeSummary>();
-    const ariaNodes: AriaNodeSummary[] = [];
+  for (const node of nodes) {
+    if (ariaNodes.length >= MAX_ARIA_NODES) break;
+    if (!node.backendDOMNodeId || !isWorthReferencing(node)) continue;
 
-    for (const node of nodes) {
-      if (ariaNodes.length >= MAX_ARIA_NODES) break;
-      if (!node.backendDOMNodeId || !isWorthReferencing(node)) continue;
+    const ref = `e${ariaNodes.length + 1}`;
+    const dom = await describeBackendNode(client, node.backendDOMNodeId, ref).catch(() => undefined);
+    if (!dom?.visible) continue;
+    if (!dom.interactive && !isUsefulStructuralNode(node)) continue;
 
-      const ref = `e${ariaNodes.length + 1}`;
-      const dom = await describeBackendNode(client, node.backendDOMNodeId, ref).catch(() => undefined);
-      if (!dom?.visible) continue;
-      if (!dom.interactive && !isUsefulStructuralNode(node)) continue;
-
-      const summary: AriaNodeSummary = {
-        ref,
-        role: axString(node.role),
-        name: axString(node.name),
-        tag: dom.tag,
-        selector: dom.selector,
-        text: dom.text,
-        value: dom.value,
-        placeholder: dom.placeholder,
-        type: dom.type,
-        disabled: booleanProperty(node, "disabled") || dom.disabled,
-        checked: booleanProperty(node, "checked"),
-        expanded: booleanProperty(node, "expanded"),
-        selected: booleanProperty(node, "selected"),
-        bounds: dom.bounds
-      };
-
-      summarizedById.set(node.nodeId, summary);
-      ariaNodes.push(summary);
-    }
-
-    const rootIds = findRootIds(nodes);
-    const lines = rootIds.flatMap((id) => renderNode(byId, summarizedById, id, 0));
-    const ariaTree = lines.slice(0, MAX_TREE_LINES).join("\n");
-
-    return {
-      ariaTree,
-      ariaNodes
+    const summary: AriaNodeSummary = {
+      ref,
+      role: axString(node.role),
+      name: axString(node.name),
+      tag: dom.tag,
+      selector: dom.selector,
+      text: dom.text,
+      value: dom.value,
+      placeholder: dom.placeholder,
+      type: dom.type,
+      disabled: booleanProperty(node, "disabled") || dom.disabled,
+      checked: booleanProperty(node, "checked"),
+      expanded: booleanProperty(node, "expanded"),
+      selected: booleanProperty(node, "selected"),
+      bounds: dom.bounds
     };
-  } finally {
-    await client.detach().catch(() => undefined);
+
+    summarizedById.set(node.nodeId, summary);
+    ariaNodes.push(summary);
   }
+
+  const rootIds = findRootIds(nodes);
+  const lines = rootIds.flatMap((id) => renderNode(byId, summarizedById, id, 0));
+  const ariaTree = lines.slice(0, MAX_TREE_LINES).join("\n");
+
+  return {
+    ariaTree,
+    ariaNodes
+  };
 }
 
 async function describeBackendNode(
-  client: CDPSession,
+  client: CdpSend,
   backendNodeId: number,
   ref: string
 ): Promise<DomDescription | undefined> {
@@ -242,14 +236,11 @@ function trim(value: string, max: number): string {
 }
 
 async function send<T = unknown>(
-  client: CDPSession,
+  client: CdpSend,
   method: string,
   params: Record<string, unknown> = {}
 ): Promise<T> {
-  const sender = client as unknown as {
-    send: (method: string, params?: Record<string, unknown>) => Promise<T>;
-  };
-  return sender.send(method, params);
+  return client.send<T>(method, params);
 }
 
 const describeElementFunction = String(function describeElement(this: Node, ref: string) {

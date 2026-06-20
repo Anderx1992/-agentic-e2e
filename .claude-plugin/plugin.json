@@ -1,0 +1,12 @@
+{
+  "name": "browser-change-verifier",
+  "description": "Use a Claude Agent SDK verifier plus Chrome DevTools Protocol to validate frontend code changes in a real browser from Claude Code.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Agentic E2E"
+  },
+  "repository": {
+    "type": "git"
+  },
+  "license": "MIT"
+}

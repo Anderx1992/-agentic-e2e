@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "browser-change-verifier": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/start-mcp.mjs"],
+      "timeout": 600000
+    },
+    "browser-vision-analyzer": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/start-mcp.mjs", "src/mcp/vision-server.ts"],
+      "timeout": 600000
+    },
+    "browser-change-agent": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/start-mcp.mjs", "src/mcp/agent-server.ts"],
+      "timeout": 600000
+    }
+  }
+}
