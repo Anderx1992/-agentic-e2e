@@ -140,9 +140,9 @@ function buildPrompt(input, modelConfig) {
 			"If startCommand is provided, use it. Otherwise infer the app dev or preview command from project files.",
 			"If appUrl is provided, use it. Otherwise infer or discover the local URL from the running app.",
 			"Call browser_start before browser tools. Use the requested headless value.",
-			"Use browser_observe before visible actions.",
-			"Prioritize screenshot-based visual analysis.",
-			"For visual changes or ambiguous screenshots, call analyze_screenshot with screenshotPath and a focused prompt.",
+			"Use browser_observe with includeScreenshotImage=false before visible actions; keep screenshotPath in the main context instead of image bytes.",
+			"Prioritize screenshot-path-based visual analysis: call analyze_screenshot with screenshotPath and a focused prompt when visual judgment is needed.",
+			"Do not ask the main verification agent to inspect screenshot image blocks unless the user explicitly requested manual visual debugging.",
 			"Use ariaNodes refs for clicks/typing after visual target identification.",
 			"Report changed files considered, inferred route/page, behavior under test, actions, screenshot evidence, vision-model findings when used, console errors, failed requests, blockers, assumptions, and final pass/fail/blocked judgment.",
 			"Close the browser unless keeping it open is necessary to explain a blocker."
@@ -154,6 +154,12 @@ function buildPrompt(input, modelConfig) {
 			"Navigation changes require verifying the affected deep link or adjacent navigation behavior.",
 			"Data-fetching changes require checking loading, success, empty, or error-adjacent UI when practical.",
 			"Styling changes require screenshot evidence of the changed visual state."
+		],
+		contextPolicy: [
+			"Main verification context should contain screenshot paths and compact vision summaries, not repeated screenshot image payloads.",
+			"Vision analysis happens in the browser-vision-analyzer MCP tool as a separate short-lived context.",
+			"Vision prompts must be focused on the current verification intent and request compact pass/fail/blocked evidence.",
+			"Avoid re-analyzing identical screenshots unless a new visual question is necessary."
 		]
 	}, null, 2);
 }
@@ -161,7 +167,8 @@ function systemAppend() {
 	return [
 		"You are a browser change verification agent.",
 		"Your job is to inspect code changes, infer a practical browser scenario, and verify the change in Chrome.",
-		"Use screenshot-first visual analysis. DOM, aria, and JavaScript inspection are supporting tools, not the primary evidence for visible behavior.",
+		"Use screenshot-path-first visual analysis: keep screenshot paths in the main context and call the vision analyzer for focused visual judgment.",
+		"DOM, aria, and JavaScript inspection are supporting tools, not the primary evidence for visible behavior.",
 		"Do not edit files. Do not run destructive shell commands. Avoid commands that mutate git state.",
 		"When using Bash, prefer read-only inspection commands and the project's normal dev/preview/test commands.",
 		"Use Chinese for final summaries unless the user requested another language."

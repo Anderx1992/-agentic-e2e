@@ -11,7 +11,7 @@ The plugin changes the old runner model: it no longer executes natural-language 
 - A plugin Stop hook at `hooks/hooks.json` that can auto-run verification before Claude Code finishes a coding turn
 - Three plugin MCP servers in `.mcp.json`
 - A Claude Agent SDK verification agent that orchestrates diff inspection, app startup, browser control, and visual analysis
-- CDP browser tools for navigation, screenshot-first observation, element refs, typing, key presses, DOM probes, JavaScript inspection, console errors, and failed network requests
+- CDP browser tools for navigation, screenshot-path-first observation, element refs, typing, key presses, DOM probes, JavaScript inspection, console errors, and failed network requests
 - A separate vision-analysis MCP tool that reads a screenshot and calls Claude Agent SDK
 
 ## Local Development
@@ -110,7 +110,7 @@ The auto hook:
 2. Reads `git status --short --untracked-files=all`, `git diff --stat`, staged diff stat, targeted diffs, and relevant untracked frontend file contents for fingerprinting.
 3. Skips when the current turn did not write code, when there are no frontend-relevant changes, or when the same diff fingerprint was already verified.
 4. Stores the last verified diff fingerprint in Claude plugin data, so the same diff is not verified repeatedly.
-5. Runs screenshot-first browser verification and returns the result as Stop-hook context.
+5. Runs screenshot-path-first browser verification and returns the result as Stop-hook context.
 6. Lets Claude continue: if verification passed it should report evidence and finish; if verification failed or was blocked it should fix and let the hook re-run on the new diff.
 
 Set `BROWSER_CHANGE_VERIFIER_AUTO_VERIFY=0` to disable the automatic Stop-hook verifier for a session.
@@ -154,24 +154,26 @@ Example prompt after visual styling work:
 Use browser-change-verifier to check the visual state touched by this CSS change. Capture a screenshot and tell me what you verified.
 ```
 
-Example prompt that makes the screenshot-first preference explicit:
+Example prompt that makes the screenshot-path-first preference explicit:
 
 ```text
-Use browser-change-verifier to verify this change. Prioritize screenshot-based visual analysis first, then use aria/DOM refs only to interact with the page and confirm details.
+Use browser-change-verifier to verify this change. Prioritize screenshotPath-based visual analysis through the vision analyzer, then use aria/DOM refs only to interact with the page and confirm details.
 ```
 
-## Screenshot-First Verification
+## Screenshot-Path-First Verification
 
-`browser_observe` returns a screenshot image in the MCP result by default, in addition to `screenshotPath`, `ariaTree`, `ariaNodes`, visible text, console errors, and failed requests.
+`browser_observe` returns `screenshotPath`, `ariaTree`, `ariaNodes`, visible text, console errors, and failed requests. It does not attach screenshot image bytes by default, which keeps the main verification agent context small.
 
 Preferred order when operating the browser:
 
 1. Call `browser_observe`.
-2. Analyze the screenshot visually: layout, visible labels, button state, form validation, loading state, spacing, contrast, and whether the changed UI is actually present.
+2. Use the returned `screenshotPath` as the visual artifact.
 3. Use `ariaNodes` refs to click/type once the visual target is clear.
-4. If the screenshot needs stronger visual judgment, call `mcp__browser-vision-analyzer__analyze_screenshot` with `screenshotPath` and a focused prompt.
+4. If the screenshot needs visual judgment, call `mcp__browser-vision-analyzer__analyze_screenshot` with `screenshotPath` and a focused prompt.
 5. Use `browser_probe_dom` or `browser_run_js` only for details that are hidden, ambiguous, or not visually inspectable.
-6. Report what was seen in the screenshot before reporting DOM-level evidence.
+6. Report the screenshot path and compact vision summary before reporting DOM-level evidence.
+
+Set `includeScreenshotImage: true` only for manual debugging of a single screenshot. Automated verification should keep image bytes out of the main agent context and use the vision MCP as a separate short-lived context.
 
 ## Vision MCP
 
@@ -192,11 +194,14 @@ Inputs:
 
 Model configuration is shared with the high-level agent. The MCP reads `~/.claude/settings.json`, passes that settings file to Claude Agent SDK, and falls back to `CLAUDE_MODEL` or the SDK default if no user setting exists.
 
-Typical flow:
+Typical context-efficient flow:
 
 ```text
-mcp__browser-change-verifier__browser_observe
-mcp__browser-vision-analyzer__analyze_screenshot({ screenshotPath, prompt })
+mcp__browser-change-verifier__browser_observe({ includeScreenshotImage: false })
+mcp__browser-vision-analyzer__analyze_screenshot({
+  screenshotPath,
+  prompt: "Does this screenshot show the expected validation error under the email field? Return pass/fail, visible evidence, concerns, and confidence."
+})
 ```
 
 Keep browser control and vision judgment separate: use `browser-change-verifier` to navigate and capture, then `browser-vision-analyzer` for Claude Agent SDK-based screenshot analysis.
@@ -262,7 +267,7 @@ You can call the agent directly:
 
 ```text
 mcp__browser-change-agent__verify_change({
-  "instruction": "Verify the current frontend diff with screenshot-first visual analysis.",
+  "instruction": "Verify the current frontend diff with screenshot-path-first visual analysis.",
   "appUrl": "http://localhost:3000",
   "startCommand": "npm run dev",
   "headless": true
@@ -345,7 +350,7 @@ The plugin exposes these tools under `browser-change-verifier`:
 - `browser_probe_dom`
 - `browser_close`
 
-Use `browser_observe` before visible actions. It returns a screenshot image plus `ariaNodes` with refs such as `e1`; visually analyze the screenshot first, then prefer ref-based tools over coordinate clicks. Use `browser_probe_dom` when screenshot plus accessibility metadata are not enough.
+Use `browser_observe` before visible actions. It returns `screenshotPath` plus `ariaNodes` with refs such as `e1`; use `analyze_screenshot` for focused visual analysis, then prefer ref-based tools over coordinate clicks. Use `browser_probe_dom` when screenshot path plus accessibility metadata are not enough.
 
 ## Runtime Notes
 

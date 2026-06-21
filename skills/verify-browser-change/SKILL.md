@@ -6,7 +6,7 @@ description: Verify frontend code changes by inspecting the git diff, starting t
 
 Use this skill when code changes need browser-level confidence, especially for UI behavior, routes, forms, client state, visual regressions, auth-adjacent flows, or bug fixes that should be exercised in an actual page.
 
-Primary browser verification mode is screenshot-first. After every `browser_observe`, inspect the screenshot visually before relying on `ariaNodes`, visible text, or DOM probes. Use DOM and accessibility metadata to identify actionable refs and confirm details, but make the first judgment from what the user would actually see.
+Primary browser verification mode is screenshot-path-first. After every `browser_observe`, use the returned `screenshotPath` as the visual artifact and avoid attaching screenshot image blocks to the main verification-agent context. Use DOM and accessibility metadata to identify actionable refs and confirm details, but make user-visible judgments from the screenshot by calling the separate vision analyzer when visual evidence matters.
 
 Default orchestration is handled by the Claude Agent SDK agent tool `mcp__browser-change-agent__verify_change`. It reads the user's `~/.claude/settings.json` for model configuration, inspects the code diff, starts or uses the app, controls Chrome, and calls the vision analyzer when useful.
 
@@ -34,7 +34,8 @@ When a screenshot needs deeper visual judgment during manual debugging, call the
    - Use `mcp__browser-change-verifier__browser_start` first.
    - Navigate with `browser_navigate`.
    - Observe before every visible action with `browser_observe`.
-   - Analyze the returned screenshot image first: layout, visible state, labels, errors, disabled/enabled controls, loading states, and visual regressions.
+   - Prefer `browser_observe` with `includeScreenshotImage: false`; keep the screenshot file path in the main context instead of image bytes.
+   - For layout, visible state, labels, errors, disabled/enabled controls, loading states, and visual regressions, call `mcp__browser-vision-analyzer__analyze_screenshot` with `screenshotPath` and a focused prompt.
    - Use `ariaNodes` from the same observation to pick stable refs after the visual target is understood.
    - Prefer `browser_click_ref` and `browser_type_ref` using refs from `ariaNodes`.
    - Use `browser_probe_dom` only when screenshot plus aria tree are not enough to identify the needed target.
@@ -42,7 +43,7 @@ When a screenshot needs deeper visual judgment during manual debugging, call the
 
 5. Validate the change.
    - Exercise the user flow affected by the diff.
-   - Check both positive evidence and likely regression points nearby using screenshot observations first.
+   - Check both positive evidence and likely regression points nearby using screenshot paths and focused vision-analysis calls when visual judgment is required.
    - For visual changes or ambiguous screenshots, send `screenshotPath` to `mcp__browser-vision-analyzer__analyze_screenshot` with a focused prompt.
    - Watch `consoleErrors` and `failedRequests` from observations.
    - Treat screenshots as the primary evidence for user-visible behavior; use DOM/JS inspection as supporting evidence for hidden state or hard-to-see details.
@@ -75,5 +76,17 @@ Build the verification scenario from the diff before browser work:
 - Fallback: if the exact route cannot be inferred or reached, use the closest page/story that renders the component and report the assumption.
 
 Do not verify only the app shell, landing page, or homepage unless the diff points there or no narrower changed surface can be found.
+
+## Context-efficient visual analysis
+
+Keep image bytes out of the main verification-agent context unless the user is manually debugging a single screenshot:
+
+- Call `browser_observe` with `includeScreenshotImage: false` by default.
+- Keep `screenshotPath`, visible text, aria nodes, console errors, and failed requests in the main context.
+- Send screenshots to `mcp__browser-vision-analyzer__analyze_screenshot` only for focused visual questions.
+- Ask the vision analyzer narrow questions tied to the verification intent, such as whether a specific error message, disabled state, layout, or changed copy is visible.
+- Ask the vision analyzer to return compact evidence: pass/fail/blocked, visible evidence, concerns, and confidence.
+- Do not re-analyze the same screenshot unless a new question is necessary.
+- Report the screenshot path and compact vision summary instead of carrying screenshot image data forward.
 
 Do not ask the user for a manual test script unless the changed behavior cannot be inferred from code and local context.

@@ -29842,13 +29842,13 @@ server.registerTool("browser_navigate", {
 });
 server.registerTool("browser_observe", {
 	title: "Observe Browser",
-	description: "Observe the current page with a screenshot-first result. Returns screenshot image/path, URL, title, visible text, aria tree/nodes, console errors, and failed requests.",
+	description: "Observe the current page with a screenshot-path-first result. Returns screenshot path, URL, title, visible text, aria tree/nodes, console errors, and failed requests. The screenshot image is omitted by default to preserve agent context.",
 	inputSchema: {
 		artifactDir: string().optional().describe("Directory for screenshots. Defaults to artifacts/browser-change-verifier."),
 		includeVisibleText: boolean().optional().describe("Include visible page text. Defaults to true."),
-		includeScreenshotImage: boolean().optional().describe("Attach the screenshot image to the tool result for visual analysis. Defaults to true.")
+		includeScreenshotImage: boolean().optional().describe("Attach the screenshot image to the tool result for manual visual analysis. Defaults to false; prefer analyze_screenshot with screenshotPath.")
 	}
-}, async ({ artifactDir, includeVisibleText = true, includeScreenshotImage = true }) => {
+}, async ({ artifactDir, includeVisibleText = true, includeScreenshotImage = false }) => {
 	const observer = requireObserver();
 	state.observeCount += 1;
 	const dir = path.resolve(artifactDir ?? "artifacts/browser-change-verifier");

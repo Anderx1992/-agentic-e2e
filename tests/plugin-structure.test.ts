@@ -116,3 +116,15 @@ test("agent prompt uses the browser verification skill as shared instructions", 
   assert.match(agentSource, /verify-browser-change/);
   assert.match(agentSource, /SKILL\.md/);
 });
+
+test("browser observation defaults to context-efficient screenshot paths", () => {
+  const serverSource = fs.readFileSync(path.join(root, "src", "mcp", "server.ts"), "utf8");
+  const agentSource = fs.readFileSync(path.join(root, "src", "agent", "verify-agent.ts"), "utf8");
+  const skill = fs.readFileSync(path.join(root, "skills", "verify-browser-change", "SKILL.md"), "utf8");
+
+  assert.match(serverSource, /includeScreenshotImage = false/);
+  assert.match(agentSource, /screenshot-path-first/);
+  assert.match(agentSource, /includeScreenshotImage=false/);
+  assert.match(skill, /Context-efficient visual analysis/);
+  assert.match(skill, /includeScreenshotImage: false/);
+});
