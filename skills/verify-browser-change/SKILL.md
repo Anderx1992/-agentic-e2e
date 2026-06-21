@@ -15,8 +15,9 @@ When a screenshot needs deeper visual judgment during manual debugging, call the
 ## Workflow
 
 1. Inspect the code change first.
-   - Use `git diff --stat` and targeted `git diff` reads to identify changed routes, components, forms, data dependencies, feature flags, and expected user paths.
-   - Infer the smallest meaningful browser scenario from the code, not from a prewritten test case.
+   - Use `git status --short --untracked-files=all`, `git diff --stat`, staged diff stat, targeted diffs, and relevant untracked files to identify changed routes, components, forms, data dependencies, feature flags, and expected user paths.
+   - Infer the smallest meaningful browser scenario from the code, not from a prewritten test case or a generic homepage smoke test.
+   - Before opening the browser, state a verification intent: changed files, inferred route/page, changed behavior, user action sequence, expected visible result, and nearest fallback if the route cannot be reached.
    - If the app start command is not obvious, inspect `package.json`, framework config, and README files.
 
 2. Prefer the SDK agent for end-to-end orchestration.
@@ -54,11 +55,25 @@ When a screenshot needs deeper visual judgment during manual debugging, call the
 
 ## Heuristics
 
+- For route/page file changes, verify the route or layout segment implied by the file path and route conventions.
 - For component-only changes, find the route, story, or page that renders the component.
 - For form changes, verify typing, validation, submission state, and success/error messaging.
 - For navigation changes, verify deep links and back/forward-adjacent behavior when relevant.
 - For data fetching changes, verify loading, success, empty, and error-adjacent UI if they are practical to reach.
 - For styling changes, capture a screenshot path and explicitly mention what visual state was checked.
 - For any visual or interaction verification, describe what was seen in the screenshot before describing DOM details.
+
+## Change-to-scenario inference
+
+Build the verification scenario from the diff before browser work:
+
+- Changed files: list the frontend-relevant files and whether they are modified, staged, renamed, or untracked.
+- Route/page inference: map route files, router config, links, imports, stories, or parent pages to the URL or preview surface that renders the changed code.
+- Behavior under test: name the specific changed behavior, state, validation, copy, navigation, data loading, or visual condition.
+- User flow: choose the shortest realistic actions that expose the changed behavior.
+- Evidence plan: name what screenshot-visible result, console state, failed request state, or form/navigation outcome would prove the change.
+- Fallback: if the exact route cannot be inferred or reached, use the closest page/story that renders the component and report the assumption.
+
+Do not verify only the app shell, landing page, or homepage unless the diff points there or no narrower changed surface can be found.
 
 Do not ask the user for a manual test script unless the changed behavior cannot be inferred from code and local context.

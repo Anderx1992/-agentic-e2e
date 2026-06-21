@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import * as z from "zod/v4";
+import { markAgentEditForAutoVerify, runAutoVerifyStopHook } from "../agent/auto-verify-hook.js";
 import { runBrowserChangeAgent } from "../agent/verify-agent.js";
 
 const server = new McpServer({
@@ -27,6 +28,59 @@ server.registerTool(
   },
   async (input) => {
     const result = await runBrowserChangeAgent(input);
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify(result, null, 2)
+        }
+      ]
+    };
+  }
+);
+
+server.registerTool(
+  "mark_agent_edit",
+  {
+    title: "Mark Agent Code Edit For Auto Verification",
+    description:
+      "Claude Code PostToolUse hook entrypoint. Marks that the agent wrote code this turn so the Stop hook can run browser self-verification once coding settles.",
+    inputSchema: {
+      cwd: z.string().optional().describe("Project working directory from the PostToolUse hook."),
+      hookEventName: z.string().optional().describe("Hook event name, normally PostToolUse."),
+      toolName: z.string().optional().describe("Tool name that just ran, such as Write, Edit, or MultiEdit."),
+      toolInput: z.unknown().optional().describe("Original tool input from Claude Code, when available.")
+    }
+  },
+  async (input) => {
+    const result = await markAgentEditForAutoVerify(input);
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify(result, null, 2)
+        }
+      ]
+    };
+  }
+);
+
+server.registerTool(
+  "auto_verify_stop",
+  {
+    title: "Auto Verify Frontend Diff On Stop",
+    description:
+      "Claude Code Stop-hook entrypoint. Detects frontend-relevant git changes, runs browser verification once per diff fingerprint, and feeds the result back to Claude before it finishes.",
+    inputSchema: {
+      cwd: z.string().optional().describe("Project working directory from the Stop hook."),
+      hookEventName: z.string().optional().describe("Hook event name, normally Stop."),
+      stopHookActive: z.union([z.boolean(), z.string()]).optional().describe("Stop hook recursion guard from Claude Code."),
+      transcriptPath: z.string().optional().describe("Claude Code transcript path."),
+      lastAssistantMessage: z.string().optional().describe("Last assistant message from the Stop hook.")
+    }
+  },
+  async (input) => {
+    const result = await runAutoVerifyStopHook(input);
     return {
       content: [
         {

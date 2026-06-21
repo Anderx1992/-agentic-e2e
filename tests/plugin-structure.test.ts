@@ -64,4 +64,55 @@ test("browser verification skill is namespaced by the plugin", () => {
   assert.match(skill, /mcp__browser-change-verifier__browser_start/);
   assert.match(skill, /mcp__browser-vision-analyzer__analyze_screenshot/);
   assert.match(skill, /mcp__browser-change-agent__verify_change/);
+  assert.match(skill, /Change-to-scenario inference/);
+  assert.match(skill, /verification intent/);
+  assert.match(skill, /Do not verify only the app shell, landing page, or homepage/);
+});
+
+test("plugin declares automatic hooks for agent-triggered self-verification", () => {
+  const hookPath = path.join(root, "hooks", "hooks.json");
+  const config = JSON.parse(fs.readFileSync(hookPath, "utf8")) as {
+    hooks?: {
+      PostToolUse?: Array<{
+        matcher?: string;
+        hooks?: Array<{
+          type?: string;
+          server?: string;
+          tool?: string;
+          input?: Record<string, unknown>;
+        }>;
+      }>;
+      Stop?: Array<{
+        hooks?: Array<{
+          type?: string;
+          server?: string;
+          tool?: string;
+          input?: Record<string, unknown>;
+        }>;
+      }>;
+    };
+  };
+
+  const postToolHook = config.hooks?.PostToolUse?.[0]?.hooks?.[0];
+  assert.match(config.hooks?.PostToolUse?.[0]?.matcher ?? "", /Write/);
+  assert.match(config.hooks?.PostToolUse?.[0]?.matcher ?? "", /Edit/);
+  assert.match(config.hooks?.PostToolUse?.[0]?.matcher ?? "", /MultiEdit/);
+  assert.equal(postToolHook?.type, "mcp_tool");
+  assert.equal(postToolHook?.server, "browser-change-agent");
+  assert.equal(postToolHook?.tool, "mark_agent_edit");
+
+  const stopHook = config.hooks?.Stop?.[0]?.hooks?.[0];
+  assert.equal(stopHook?.type, "mcp_tool");
+  assert.equal(stopHook?.server, "browser-change-agent");
+  assert.equal(stopHook?.tool, "auto_verify_stop");
+  assert.equal(stopHook?.input?.cwd, "${cwd}");
+});
+
+test("agent prompt uses the browser verification skill as shared instructions", () => {
+  const agentSource = fs.readFileSync(path.join(root, "src", "agent", "verify-agent.ts"), "utf8");
+
+  assert.match(agentSource, /skillInstructions/);
+  assert.match(agentSource, /skills/);
+  assert.match(agentSource, /verify-browser-change/);
+  assert.match(agentSource, /SKILL\.md/);
 });

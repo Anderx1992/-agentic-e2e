@@ -135,6 +135,7 @@ function buildPrompt(input: VerifyChangeInput, modelConfig: AgentModelConfig): s
     {
       task: "Verify the current frontend code changes in a real browser.",
       userInstruction: input.instruction ?? "Inspect the current git diff, infer the affected browser scenario, and verify it.",
+      skillInstructions: loadBrowserVerificationSkill(),
       appUrl: input.appUrl,
       startCommand: input.startCommand,
       browser: {
@@ -149,7 +150,10 @@ function buildPrompt(input: VerifyChangeInput, modelConfig: AgentModelConfig): s
         fallbackModel: modelConfig.fallbackModel
       },
       requiredWorkflow: [
-        "Inspect git diff/stat and relevant files before opening the browser.",
+        "Inspect git status --short --untracked-files=all, git diff/stat, staged diff/stat, and relevant files before opening the browser.",
+        "Include untracked changed files when inferring the affected scenario.",
+        "Before opening the browser, produce a verification intent with changed files, inferred route/page, behavior under test, user flow, expected visible evidence, and fallback surface.",
+        "Do not verify only the app shell, landing page, or homepage unless the diff points there or no narrower changed surface can be found.",
         "If startCommand is provided, use it. Otherwise infer the app dev or preview command from project files.",
         "If appUrl is provided, use it. Otherwise infer or discover the local URL from the running app.",
         "Call browser_start before browser tools. Use the requested headless value.",
@@ -157,8 +161,16 @@ function buildPrompt(input: VerifyChangeInput, modelConfig: AgentModelConfig): s
         "Prioritize screenshot-based visual analysis.",
         "For visual changes or ambiguous screenshots, call analyze_screenshot with screenshotPath and a focused prompt.",
         "Use ariaNodes refs for clicks/typing after visual target identification.",
-        "Report route, actions, screenshot evidence, vision-model findings when used, console errors, failed requests, blockers, and final pass/fail/blocked judgment.",
+        "Report changed files considered, inferred route/page, behavior under test, actions, screenshot evidence, vision-model findings when used, console errors, failed requests, blockers, assumptions, and final pass/fail/blocked judgment.",
         "Close the browser unless keeping it open is necessary to explain a blocker."
+      ],
+      scenarioInference: [
+        "Route/page file changes map through framework route conventions and router configuration.",
+        "Component-only changes require finding an importer, story, parent route, or preview that renders the component.",
+        "Form changes require exercising input, validation, submission state, and success or error messaging.",
+        "Navigation changes require verifying the affected deep link or adjacent navigation behavior.",
+        "Data-fetching changes require checking loading, success, empty, or error-adjacent UI when practical.",
+        "Styling changes require screenshot evidence of the changed visual state."
       ]
     },
     null,
@@ -175,6 +187,11 @@ function systemAppend(): string {
     "When using Bash, prefer read-only inspection commands and the project's normal dev/preview/test commands.",
     "Use Chinese for final summaries unless the user requested another language."
   ].join("\n");
+}
+
+function loadBrowserVerificationSkill(): string {
+  const skillPath = path.join(pluginRoot, "skills", "verify-browser-change", "SKILL.md");
+  return fs.readFileSync(skillPath, "utf8");
 }
 
 function messageToText(message: SDKMessage): string {

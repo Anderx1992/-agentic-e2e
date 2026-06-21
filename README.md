@@ -8,6 +8,7 @@ The plugin changes the old runner model: it no longer executes natural-language 
 
 - A Claude Code plugin manifest at `.claude-plugin/plugin.json`
 - A skill at `skills/verify-browser-change/SKILL.md`
+- A plugin Stop hook at `hooks/hooks.json` that can auto-run verification before Claude Code finishes a coding turn
 - Three plugin MCP servers in `.mcp.json`
 - A Claude Agent SDK verification agent that orchestrates diff inspection, app startup, browser control, and visual analysis
 - CDP browser tools for navigation, screenshot-first observation, element refs, typing, key presses, DOM probes, JavaScript inspection, console errors, and failed network requests
@@ -92,6 +93,7 @@ The distributed plugin must include:
 
 - `.claude-plugin/plugin.json`
 - `.mcp.json`
+- `hooks/hooks.json`
 - `skills/verify-browser-change/SKILL.md`
 - `dist/`
 - `README.md`
@@ -100,7 +102,21 @@ It does not need `node_modules`, and plugin users do not need to run `npm instal
 
 ## Daily Usage
 
-After you make or review frontend changes, ask Claude Code to verify them:
+When the plugin is enabled, Claude Code gets an agent-triggered self-verification path. A lightweight `PostToolUse` hook marks the turn whenever the agent writes code with `Write`, `Edit`, or `MultiEdit`. On the later `Stop` hook, `browser-change-agent.auto_verify_stop` checks the current git state. If the marked turn left frontend-relevant files changed and that exact diff fingerprint has not already been verified, it runs the browser verification agent and feeds the result back to Claude before the turn finishes.
+
+The auto hook:
+
+1. Marks agent edit turns through `browser-change-agent.mark_agent_edit`.
+2. Reads `git status --short --untracked-files=all`, `git diff --stat`, staged diff stat, targeted diffs, and relevant untracked frontend file contents for fingerprinting.
+3. Skips when the current turn did not write code, when there are no frontend-relevant changes, or when the same diff fingerprint was already verified.
+4. Stores the last verified diff fingerprint in Claude plugin data, so the same diff is not verified repeatedly.
+5. Runs screenshot-first browser verification and returns the result as Stop-hook context.
+6. Lets Claude continue: if verification passed it should report evidence and finish; if verification failed or was blocked it should fix and let the hook re-run on the new diff.
+
+Set `BROWSER_CHANGE_VERIFIER_AUTO_VERIFY=0` to disable the automatic Stop-hook verifier for a session.
+Set `BROWSER_CHANGE_VERIFIER_VERIFY_EXISTING_DIFF=1` to verify an existing frontend diff even when the current turn was not marked by an agent edit hook.
+
+You can still ask Claude Code to verify manually after you make or review frontend changes:
 
 ```text
 Use browser-change-verifier to verify the current frontend diff in a real browser.
@@ -114,7 +130,7 @@ Or invoke the skill explicitly:
 
 Claude Code should then:
 
-1. Inspect `git diff --stat` and targeted diffs.
+1. Inspect `git status --short --untracked-files=all`, `git diff --stat`, staged diff stat, and targeted diffs.
 2. Infer the affected route, component, form, or UI flow.
 3. Call `mcp__browser-change-agent__verify_change`.
 4. Let the Agent SDK verification agent start/use the app, control Chrome, observe screenshots, and call the vision analyzer when useful.

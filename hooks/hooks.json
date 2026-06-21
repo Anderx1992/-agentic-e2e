@@ -1,0 +1,43 @@
+{
+  "description": "Automatically run browser-change verification when Claude Code is about to finish a turn with frontend-relevant git changes.",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "browser-change-agent",
+            "tool": "mark_agent_edit",
+            "input": {
+              "cwd": "${cwd}",
+              "hookEventName": "${hook_event_name}",
+              "toolName": "${tool_name}",
+              "toolInput": "${tool_input}"
+            },
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "browser-change-agent",
+            "tool": "auto_verify_stop",
+            "input": {
+              "cwd": "${cwd}",
+              "hookEventName": "${hook_event_name}",
+              "stopHookActive": "${stop_hook_active}",
+              "transcriptPath": "${transcript_path}",
+              "lastAssistantMessage": "${last_assistant_message}"
+            },
+            "timeout": 900
+          }
+        ]
+      }
+    ]
+  }
+}
